@@ -1,0 +1,106 @@
+#include <EnableInterrupt.h>
+#include <GyverMotor2.h>
+
+int MOTOR1_HALL1_PIN = 2;  // Аппаратное прерывание 0
+int MOTOR1_HALL2_PIN = 3; // Аппаратное прерывание 1
+int MOTOR2_HALL1_PIN = 8;  // Программное прерывание (PCINT)
+int MOTOR2_HALL2_PIN = 9;  // Программное прерывание (PCINT)
+
+volatile long encoder1Count = 0;  // Счётчик импульсов мотор 1 (со знаком)
+volatile long encoder2Count = 0;  // Счётчик импульсов мотор 2 (со знаком)
+
+// Сколько импульсов на один полный оборот (оба канала вместе!)
+const int PULSES_PER_REVOLUTION = 2205;  // ←←← ПОДСТАВЬТЕ СВОЁ ЗНАЧЕНИЕ!
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Двойной квадратурный энкодер Холла + направление");
+
+  pinMode(MOTOR1_HALL1_PIN, INPUT_PULLUP);
+  pinMode(MOTOR1_HALL2_PIN, INPUT_PULLUP);
+  pinMode(MOTOR2_HALL1_PIN, INPUT_PULLUP);
+  pinMode(MOTOR2_HALL2_PIN, INPUT_PULLUP);
+
+  // Аппаратные прерывания — мотор 1
+  enableInterrupt(MOTOR1_HALL1_PIN, updateEncoder1, CHANGE);
+  enableInterrupt(MOTOR1_HALL2_PIN, updateEncoder1, CHANGE);
+
+  enableInterrupt(MOTOR2_HALL1_PIN, updateEncoder2, CHANGE);
+  enableInterrupt(MOTOR2_HALL2_PIN, updateEncoder2, CHANGE);
+}
+
+void loop() {
+  static unsigned long lastDisplay = 0;
+
+  if (millis() - lastDisplay >= 400) {
+    noInterrupts();
+    long cnt1 = encoder1Count;
+    long cnt2 = -encoder2Count;
+    interrupts();
+
+
+    Serial.print("М1: ");
+    if (cnt1 >= 0) Serial.print("+");
+    else Serial.print("-");
+    Serial.print(abs(cnt1));
+    Serial.print(" имп  →  ");
+    Serial.print(float(cnt1) / PULSES_PER_REVOLUTION, 3);
+    Serial.print(" об   ");
+
+    Serial.print("   М2: ");
+    if (cnt2 >= 0) Serial.print("+");
+    else Serial.print("-");
+    Serial.print(abs(cnt2));
+    Serial.print(" имп  →  ");
+    Serial.print(float(cnt2) / PULSES_PER_REVOLUTION, 3);
+    Serial.println(" об");
+  }
+
+  if (Serial.available()) {
+    // Добавляем Stringи
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (input == "SniperReset") {
+      encoder1Count = 0;
+      encoder2Count = 0;
+    }
+  }
+}
+
+void checkEncoder(int motorEncPin1, int motorEncPin2, volatile long& motorCount) {
+  static byte prevState = 0;
+  byte A = digitalRead(motorEncPin2);
+  byte B = digitalRead(motorEncPin1);
+
+  byte currentState = (A << 1) | B;
+
+  // Таблица переходов для определения направления
+  switch (prevState) {
+    case 0b00:
+      if (currentState == 0b01) motorCount++;
+      if (currentState == 0b10) motorCount--;
+      break;
+    case 0b01:
+      if (currentState == 0b11) motorCount++;
+      if (currentState == 0b00) motorCount--;
+      break;
+    case 0b11:
+      if (currentState == 0b10) motorCount++;
+      if (currentState == 0b01) motorCount--;
+      break;
+    case 0b10:
+      if (currentState == 0b00) motorCount++;
+      if (currentState == 0b11) motorCount--;
+      break;
+  }
+
+  prevState = currentState;
+}
+
+void updateEncoder1 () {
+  checkEncoder(MOTOR1_HALL1_PIN, MOTOR1_HALL2_PIN, encoder1Count);
+}
+
+void updateEncoder2 () {
+  checkEncoder(MOTOR2_HALL1_PIN, MOTOR2_HALL2_PIN, encoder2Count);
+}
